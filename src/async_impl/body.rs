@@ -21,6 +21,7 @@ pub struct Body {
 }
 
 enum Inner {
+    None,
     Reusable(Bytes),
     Streaming(BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>),
 }
@@ -56,6 +57,7 @@ impl Body {
     /// `None` is returned, if the underlying data is a stream.
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match &self.inner {
+            Inner::None => None,
             Inner::Reusable(bytes) => Some(bytes.as_ref()),
             Inner::Streaming(..) => None,
         }
@@ -126,6 +128,11 @@ impl Body {
         }
     }
     */
+    pub(crate) fn none() -> Body {
+        Body {
+            inner: Inner::None,
+        }
+    }
 
     pub(crate) fn empty() -> Body {
         Body::reusable(Bytes::new())
@@ -158,6 +165,7 @@ impl Body {
 
     pub(crate) fn try_reuse(self) -> (Option<Bytes>, Self) {
         let reuse = match self.inner {
+            Inner::None => None,
             Inner::Reusable(ref chunk) => Some(chunk.clone()),
             Inner::Streaming { .. } => None,
         };
@@ -167,6 +175,7 @@ impl Body {
 
     pub(crate) fn try_clone(&self) -> Option<Body> {
         match self.inner {
+            Inner::None => None,
             Inner::Reusable(ref chunk) => Some(Body::reusable(chunk.clone())),
             Inner::Streaming { .. } => None,
         }
@@ -205,6 +214,13 @@ impl From<hyper::Body> for Body {
     }
 }
 */
+
+impl From<()> for Body{
+    #[inline]
+    fn from(_: ()) -> Body {
+        Body::empty()
+    }
+}
 
 impl From<Bytes> for Body {
     #[inline]
@@ -265,6 +281,7 @@ impl HttpBody for Body {
         cx: &mut Context,
     ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
         match self.inner {
+            Inner::None => Poll::Ready(None),
             Inner::Reusable(ref mut bytes) => {
                 let out = bytes.split_off(0);
                 if out.is_empty() {
@@ -282,6 +299,7 @@ impl HttpBody for Body {
 
     fn size_hint(&self) -> http_body::SizeHint {
         match self.inner {
+            Inner::None => http_body::SizeHint::default(),
             Inner::Reusable(ref bytes) => http_body::SizeHint::with_exact(bytes.len() as u64),
             Inner::Streaming(ref body) => body.size_hint(),
         }
@@ -289,7 +307,8 @@ impl HttpBody for Body {
 
     fn is_end_stream(&self) -> bool {
         match self.inner {
-            Inner::Reusable(ref bytes) => bytes.is_empty(),
+            Inner::None => true,
+            Inner::Reusable(_) => false,
             Inner::Streaming(ref body) => body.is_end_stream(),
         }
     }
@@ -473,8 +492,12 @@ mod tests {
 
     #[test]
     fn body_exact_length() {
+        let none_body = Body::none();
+        assert!(none_body.is_end_stream());
+        assert_eq!(none_body.size_hint().exact(), None);
+
         let empty_body = Body::empty();
-        assert!(empty_body.is_end_stream());
+        assert!(!empty_body.is_end_stream());
         assert_eq!(empty_body.size_hint().exact(), Some(0));
 
         let bytes_body = Body::reusable("abc".into());

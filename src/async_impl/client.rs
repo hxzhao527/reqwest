@@ -2055,7 +2055,7 @@ impl Client {
                 let (reusable, body) = body.try_reuse();
                 (Some(reusable), body)
             }
-            None => (None, Body::empty()),
+            None => (None, Body::none()),
         };
 
         self.proxy_auth(&uri, &mut headers);
